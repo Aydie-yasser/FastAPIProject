@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +11,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     database_url: str
+    jwt_secret_key: str = Field(
+        default="dev-only-set-JWT_SECRET_KEY-in-production",
+        description="HS256 signing secret; override via JWT_SECRET_KEY",
+    )
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60
 
 
 @lru_cache
