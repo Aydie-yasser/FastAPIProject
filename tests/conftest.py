@@ -1,5 +1,5 @@
 """
-Spin up Postgres (testcontainers), set env, run Alembic, then allow `main` imports.
+Spin up Postgres (testcontainers), set env, bind SQLAlchemy, create tables, then tests import `main`.
 
 Must run before `app.db.session` is first imported so the engine uses the test DB.
 """
@@ -10,8 +10,6 @@ import atexit
 import os
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from testcontainers.postgres import PostgresContainer
@@ -32,15 +30,8 @@ from app.config import get_settings  # noqa: E402
 
 get_settings.cache_clear()
 
-# Apply migrations to the empty container DB.
-_alembic_cfg = Config("alembic.ini")
-_alembic_cfg.set_main_option("sqlalchemy.url", get_settings().database_url)
-command.upgrade(_alembic_cfg, "head")
-
-# If anything imported session with a stale URL, rebind (safe no-op when fresh).
 import app.db.session as _session_mod  # noqa: E402
 
-get_settings.cache_clear()
 if _session_mod.engine is not None:
     _session_mod.engine.dispose()
 _session_mod.settings = get_settings()
@@ -54,6 +45,10 @@ _session_mod.SessionLocal = sessionmaker(
     autoflush=False,
     expire_on_commit=False,
 )
+
+from app.db.schema import ensure_schema  # noqa: E402
+
+ensure_schema()
 
 
 def auth_headers(token: str) -> dict[str, str]:
