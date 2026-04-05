@@ -71,15 +71,110 @@ docker compose down -v         # stop + wipe DB volume
 
 ## Database
 
-| Table | Main idea |
-|-------|-----------|
-| **users** | Login; unique `email`; `password` (bcrypt); `search_vector` for FTS |
-| **organization** | `org_id`, `org_name` |
-| **membership** | `(org_id, user_id)` + `role` (`admin` / `member`) |
-| **items** | `org_id`, `user_id`, `item_details` (JSONB) |
-| **audit_log** | Who did what; optional `details` JSONB; org/user FKs nullable on delete |
+Postgres holds all application data. On startup the app runs **`create_all`** from SQLAlchemy models (see `app/db/schema.py` and `app/models/`). There is no separate migration CLI in this repo.
 
-Users ↔ orgs is **many-to-many** through **membership**. Items and audit rows belong to an org.
+### Tables and columns
+
+**`users`** — global accounts (not tied to one org by themselves).
+
+| Column | Notes |
+|--------|--------|
+| `id` | Primary key. |
+| `full_name`, `email` | `email` is unique (indexed). |
+| `password` | Bcrypt hash (never returned by the API). |
+| `search_vector` | PostgreSQL `tsvector`, **generated** from `full_name` + `email` for English full-text search; **GIN** index for fast `@@` queries. |
+
+**`organization`** — a tenant / company.
+
+| Column | Notes |
+|--------|--------|
+| `org_id` | Primary key. |
+| `org_name` | Display name. |
+
+**`membership`** — links a user to an org with a **role** (RBAC is **per org**).
+
+| Column | Notes |
+|--------|--------|
+| `org_id`, `user_id` | **Composite primary key**; both are foreign keys (`ON DELETE CASCADE`). |
+| `role` | `"admin"` or `"member"` (string). |
+
+**`items`** — arbitrary records inside an org.
+
+| Column | Notes |
+|--------|--------|
+| `item_id` | Primary key. |
+| `org_id`, `user_id` | Owning org and creating user (FKs, `ON DELETE CASCADE`). |
+| `created_at` | Timestamp (timezone-aware), server default `now()`. |
+| `item_details` | **JSONB** — any JSON object the client sends; no fixed schema in the DB. |
+
+**`audit_log`** — append-only style events for compliance / debugging.
+
+| Column | Notes |
+|--------|--------|
+| `audit_id` | Primary key. |
+| `created_at` | When the event was recorded. |
+| `org_id`, `user_id` | Optional FKs, **`ON DELETE SET NULL`** so rows remain if a user or org row is removed. |
+| `action` | Short label, e.g. `item.create`, `organization.create`. |
+| `resource_type`, `resource_id` | What entity was affected (optional id). |
+| `details` | Optional **JSONB** payload (e.g. copied item fields). |
+
+### How things connect
+
+- A **user** can belong to **many orgs**; an **org** has **many members** → **`membership`** is the join table.
+- **Items** always belong to one **org** and one **creator user**.
+- **Audit** rows usually reference an **org** and sometimes the **actor user**; they are listed per org in the API.
+
+---
+
+## APIs
+
+Base URL is your server (e.g. `http://127.0.0.1:8000`). Interactive docs: **`/docs`**. Most org routes need a JWT.
+
+### Authentication header
+
+After login, send:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Without a valid token, protected routes return **401**. Wrong password on login returns **401**.
+
+### Auth (`/auth`)
+
+| Method | Path | Body | Who |
+|--------|------|------|-----|
+| POST | `/auth/register` | `{ "full_name", "email", "password" }` | Public; **409** if email exists. |
+| POST | `/auth/login` | `{ "email", "password" }` | Public; returns `{ "access_token", "token_type": "bearer" }`. |
+
+### Organizations (`/organizations`)
+
+Prefix: **`/organizations`**. `{id}` is the **`org_id`**.
+
+| Method | Path | Auth | What it does |
+|--------|------|------|----------------|
+| POST | `/` | JWT | Create org; creator becomes **admin**. **201** + org payload. |
+| GET | `/{id}/users` | JWT **admin** of that org | Paginated members: query `limit` (default 20, max 100), `offset`. Response: `Page` with `items` (`user_id`, `full_name`, `email`, `role`), `total`, `limit`, `offset`. |
+| GET | `/{id}/users/search` | JWT **admin** | Same member shape; query **`q`** (required) for **full-text** search on name + email; same pagination params. |
+| POST | `/{id}/user` | JWT **admin** | Invite: `{ "email", "role": "admin" \| "member" }`. Target user must **already be registered**. **201** or **404** / **409** / **403**. |
+| GET | `/{id}/item` | JWT **member** of org | List items: **members** see only **their** items; **admins** see **all** in the org. Paginated `Page` of items. Each call appends **`audit_log`** (`item.list`). |
+| POST | `/{id}/item` | JWT **member** | Create item: `{ "item_details": { ...any JSON... } }`. **201** `{ "item_id" }`; also writes **`audit_log`** (`item.create`). |
+| GET | `/{id}/audit-logs` | JWT **admin** | Paginated **`audit_log`** rows for that org. |
+| POST | `/{id}/audit-logs/ask` | JWT **admin** | Body: `{ "question": "...", "stream": false }`. Loads recent logs + calls OpenAI if configured; **`stream: true`** returns **plain text** chunks. **200** JSON `{ "answer" }` or streamed body. |
+
+### Other routes
+
+| Method | Path | Notes |
+|--------|------|--------|
+| GET | `/` | Hello message. |
+| GET | `/db/health` | Runs `SELECT 1`; checks DB connectivity. |
+
+### Common HTTP codes
+
+- **403** — Authenticated but not allowed (e.g. member hitting an admin-only route, or user not in that org).
+- **404** — Org not found, or invited email has no user account.
+- **409** — Conflict (e.g. duplicate membership).
+- **502** — Upstream LLM error on audit Q&A (non-streaming path).
 
 ---
 
@@ -91,14 +186,3 @@ Users ↔ orgs is **many-to-many** through **membership**. Items and audit rows 
 - **JSONB** — flexible; validate important fields in the API when it matters.
 
 ---
-
-## API cheat sheet
-
-- `POST /auth/register`, `POST /auth/login`
-- `POST /organizations/` — create org
-- `GET /organizations/{id}/users`, `GET .../users/search?q=` — members (**admin**)
-- `POST /organizations/{id}/user` — invite by email (**admin**)
-- `GET|POST /organizations/{id}/item` — items
-- `GET /organizations/{id}/audit-logs`, `POST .../audit-logs/ask` — audit + chat (**admin**)
-
-Protected routes: **`Authorization: Bearer <token>`**. Don’t commit secrets.
