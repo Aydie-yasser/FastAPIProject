@@ -1,5 +1,5 @@
-# 3.15 stable tag may not exist yet; official image uses 3.15-rc (pre-release) aliases.
-FROM python:3.15-rc-slim-bookworm
+# Use a stable Python so wheels exist for psycopg-binary (3.15-rc has no binary wheels yet).
+FROM python:3.14-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

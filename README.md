@@ -18,9 +18,9 @@ API for **organizations**, **members** (admin / member), **items** (JSON), **aud
 
 ## Run locally
 
-**Needs:** Python **3.15+** locally (or match the Docker image). **Postgres**. **Docker** only for Compose or `pytest`.
+**Needs:** Python **3.12+** (the **`Dockerfile`** uses **3.14** so dependencies like **`psycopg-binary`** have wheels). **Postgres**. **Docker** only for Compose or `pytest`.
 
-The **`Dockerfile`** uses **`python:3.15-rc-slim-bookworm`** (official pre-release / RC build). When Python **3.15.x** is stable, you can switch the tag to **`python:3.15-slim-bookworm`** if that image exists on Docker Hub.
+**Why not Python 3.15 in Docker yet?** Pre-release Pythons often lack pre-built wheels for **`psycopg[binary]`**, so `pip install` fails inside the image. When **`psycopg-binary`** publishes wheels for 3.15 stable, you can bump the `FROM` line.
 
 Create **`.env`** (Postgres on your machine — use `127.0.0.1`, not `db`):
 
