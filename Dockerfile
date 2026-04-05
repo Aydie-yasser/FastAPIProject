@@ -1,5 +1,5 @@
-
-FROM python:3.12-slim-bookworm
+# 3.15 stable tag may not exist yet; official image uses 3.15-rc (pre-release) aliases.
+FROM python:3.15-rc-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
