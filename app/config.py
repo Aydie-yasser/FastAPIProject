@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
 
+    # Optional: powers POST /organizations/{id}/audit-logs/ask (OpenAI-compatible Chat Completions).
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+
 
 @lru_cache
 def get_settings() -> Settings:

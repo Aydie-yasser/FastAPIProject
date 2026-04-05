@@ -15,6 +15,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     password: Mapped[str] = mapped_column(String(255))
     # PostgreSQL: stored tsvector for full-text search; GIN index in migration.
+    # tsvector is a PostgreSQL data type that stores a full-text search index.
     search_vector: Mapped[Any] = mapped_column(
         TSVECTOR,
         Computed(

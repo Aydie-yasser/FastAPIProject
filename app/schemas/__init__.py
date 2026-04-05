@@ -7,6 +7,8 @@ T = TypeVar("T")
 
 __all__ = [
     "AddOrganizationMember",
+    "AuditLogAskRequest",
+    "AuditLogAskResponse",
     "AuditLogRead",
     "ItemCreate",
     "ItemCreated",
@@ -98,6 +100,15 @@ class ItemRead(BaseModel):
     user_id: int
     created_at: datetime
     item_details: dict[str, Any]
+
+
+class AuditLogAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    stream: bool = False
+
+
+class AuditLogAskResponse(BaseModel):
+    answer: str
 
 
 class AuditLogRead(BaseModel):

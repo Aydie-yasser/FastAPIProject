@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+from openai import OpenAIError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -7,6 +9,8 @@ from app.models.membership import MembershipRole
 from app.models.user import User
 from app.schemas import (
     AddOrganizationMember,
+    AuditLogAskRequest,
+    AuditLogAskResponse,
     AuditLogRead,
     ItemCreate,
     ItemCreated,
@@ -18,6 +22,11 @@ from app.schemas import (
     Page,
 )
 from app.services.item import NotOrgMemberError, create_item, list_organization_items
+from app.services.audit_chat import (
+    answer_audit_question_sync,
+    load_audit_logs_as_text,
+    stream_audit_answer,
+)
 from app.services.organization import (
     AlreadyMemberError,
     MemberUserNotFoundError,
@@ -152,6 +161,34 @@ def list_organization_audit_logs_endpoint(
             detail="Only organization admins can view audit logs",
         )
     return Page(items=items, total=total, limit=limit, offset=offset)
+
+
+# loads recent log rows from Postgres, packs them into text, sends that plus the question to OpenAI, and returns an answer. 
+#If stream is true, the answer is sent in chunks as plain text instead of chunked response.
+@router.post("/{org_id}/audit-logs/ask")
+def ask_audit_logs(
+    org_id: int,
+    body: AuditLogAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        logs_text, n = load_audit_logs_as_text(db, org_id, current_user)
+    except OrganizationNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+    except NotOrgAdminError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admins only")
+
+    #if stream is true, return a streaming response, otherwise return a chunked response.
+    if body.stream:
+        return StreamingResponse(
+            (c.encode("utf-8") for c in stream_audit_answer(logs_text, body.question, n)),
+            media_type="text/plain; charset=utf-8",
+        )
+    try:
+        return AuditLogAskResponse(answer=answer_audit_question_sync(logs_text, body.question, n))
+    except OpenAIError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e)) from e
 
 
 @router.get("/{org_id}/item", response_model=Page[ItemRead])
